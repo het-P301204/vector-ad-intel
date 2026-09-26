@@ -272,76 +272,207 @@ function ImportProgressOverlay() {
   const { state } = useApp();
   const progress = state.importProgress!;
 
-  const stageLabels = ['Parse', 'Build Graph', 'Identify', 'Score', 'Prioritize'];
+  const stages = [
+    { label: 'PARSE', icon: '⬡' },
+    { label: 'GRAPH', icon: '⬡' },
+    { label: 'IDENTIFY', icon: '⬡' },
+    { label: 'SCORE', icon: '⬡' },
+    { label: 'RANK', icon: '⬡' },
+  ];
   const percent = Math.round((progress.stageIndex / progress.totalStages) * 100);
+  const activeStage = progress.stageIndex - 1;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
       className="absolute inset-0 z-20 flex items-center justify-center"
-      style={{ background: 'rgba(7,9,13,0.9)', backdropFilter: 'blur(10px)' }}
+      style={{ background: 'rgba(6,10,18,0.94)', backdropFilter: 'blur(20px)' }}
     >
+      {/* Ambient glow */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'radial-gradient(ellipse 55% 40% at 50% 50%, rgba(0,194,255,0.04) 0%, transparent 70%)',
+      }} />
+
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-md rounded-2xl p-8"
-        style={{ background: '#111820', border: '1px solid rgba(255,255,255,0.08)' }}
+        initial={{ scale: 0.88, opacity: 0, y: 16 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        className="relative w-full max-w-lg rounded-3xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(160deg, #0D1524 0%, #0A1120 100%)',
+          border: '1px solid rgba(0,194,255,0.12)',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,194,255,0.06), inset 0 1px 0 rgba(0,194,255,0.06)',
+        }}
       >
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-3 h-3 rounded-full animate-pulse" style={{ background: '#3B82F6', boxShadow: '0 0 8px rgba(59,130,246,0.6)' }} />
-          <span className="font-mono text-sm font-semibold tracking-wider" style={{ color: '#F5F7FA' }}>ANALYZING DATASET</span>
-        </div>
+        {/* Grid background texture */}
+        <div className="absolute inset-0 pointer-events-none" style={{
+          backgroundImage: 'linear-gradient(rgba(0,194,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(0,194,255,0.015) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+        }} />
 
-        {/* Stage pipeline */}
-        <div className="flex items-center justify-between mb-6">
-          {stageLabels.map((label, i) => (
-            <div key={i} className="flex flex-col items-center gap-1">
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-mono font-bold transition-all duration-500"
-                style={{
-                  background: i < progress.stageIndex ? '#3B82F6' : i === progress.stageIndex - 1 ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.05)',
-                  color: i < progress.stageIndex ? 'white' : i === progress.stageIndex - 1 ? '#3B82F6' : 'rgba(139,149,165,0.3)',
-                  boxShadow: i === progress.stageIndex - 1 ? '0 0 12px rgba(59,130,246,0.4)' : 'none',
-                }}
-              >
-                {i < progress.stageIndex ? '✓' : i + 1}
-              </div>
-              <span className="text-[9px] font-mono" style={{ color: i < progress.stageIndex ? '#3B82F6' : 'rgba(139,149,165,0.3)' }}>
-                {label.toUpperCase()}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Progress bar */}
-        <div className="rounded-full overflow-hidden mb-4" style={{ height: 4, background: 'rgba(255,255,255,0.05)' }}>
+        {/* Top accent line — animated scan */}
+        <div className="relative h-0.5 overflow-hidden" style={{ background: 'rgba(0,194,255,0.06)' }}>
           <motion.div
-            className="h-full rounded-full"
-            initial={{ width: 0 }}
-            animate={{ width: `${percent}%` }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-            style={{ background: 'linear-gradient(90deg, #1D4ED8, #7C3AED)', boxShadow: '0 0 8px rgba(59,130,246,0.5)' }}
+            className="absolute inset-y-0 w-24"
+            animate={{ x: ['-100%', '600%'] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
+            style={{ background: 'linear-gradient(90deg, transparent, #00C2FF, transparent)' }}
           />
         </div>
 
-        {/* Log messages */}
-        <div className="space-y-1.5">
-          {progress.messages.map((msg, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="flex items-center gap-2 text-xs font-mono"
-              style={{ color: 'rgba(16,185,129,0.8)' }}
+        <div className="relative p-7">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <motion.div
+                animate={{ opacity: [0.5, 1, 0.5], scale: [0.9, 1.1, 0.9] }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-2.5 h-2.5 rounded-full"
+                style={{ background: '#00C2FF', boxShadow: '0 0 10px #00C2FF, 0 0 20px rgba(0,194,255,0.4)' }}
+              />
+              <span className="font-mono text-sm font-bold tracking-[0.18em]" style={{ color: '#EEF2FF' }}>
+                ANALYZING DATASET
+              </span>
+            </div>
+            <motion.span
+              key={percent}
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="font-mono text-2xl font-bold tabular-nums"
+              style={{ color: '#00C2FF', textShadow: '0 0 20px rgba(0,194,255,0.5)' }}
             >
-              {msg}
-            </motion.div>
-          ))}
-          <div className="flex items-center gap-2 text-xs font-mono" style={{ color: 'rgba(139,149,165,0.6)' }}>
-            <span className="animate-pulse">▋</span>
-            {progress.currentMessage}
+              {percent}<span className="text-base font-normal" style={{ color: 'rgba(0,194,255,0.4)' }}>%</span>
+            </motion.span>
+          </div>
+
+          {/* Stage pipeline */}
+          <div className="relative flex items-center mb-6">
+            {/* Connecting track */}
+            <div className="absolute top-5 left-5 right-5 h-px" style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <motion.div
+                className="h-full"
+                animate={{ width: `${Math.max(0, (activeStage / (stages.length - 1)) * 100)}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                style={{ background: 'linear-gradient(90deg, #00C2FF, #A78BFA)', boxShadow: '0 0 8px rgba(0,194,255,0.4)' }}
+              />
+            </div>
+
+            {stages.map((stage, i) => {
+              const isDone = i < progress.stageIndex;
+              const isActive = i === activeStage;
+              return (
+                <div key={i} className="relative flex flex-col items-center flex-1">
+                  {/* Outer pulse ring for active */}
+                  {isActive && (
+                    <motion.div
+                      className="absolute top-0 w-10 h-10 rounded-full"
+                      animate={{ scale: [1, 1.5, 1], opacity: [0.4, 0, 0.4] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      style={{ background: 'rgba(0,194,255,0.15)' }}
+                    />
+                  )}
+                  {/* Node */}
+                  <motion.div
+                    animate={isActive ? { boxShadow: ['0 0 8px rgba(0,194,255,0.4)', '0 0 20px rgba(0,194,255,0.7)', '0 0 8px rgba(0,194,255,0.4)'] } : {}}
+                    transition={{ duration: 1.4, repeat: Infinity }}
+                    className="w-10 h-10 rounded-full flex items-center justify-center relative z-10 text-sm font-mono font-bold transition-all duration-500"
+                    style={{
+                      background: isDone
+                        ? 'linear-gradient(135deg, #00C2FF20, #A78BFA20)'
+                        : isActive
+                        ? 'rgba(0,194,255,0.12)'
+                        : 'rgba(255,255,255,0.03)',
+                      border: isDone
+                        ? '1.5px solid rgba(0,194,255,0.5)'
+                        : isActive
+                        ? '1.5px solid rgba(0,194,255,0.7)'
+                        : '1.5px solid rgba(255,255,255,0.07)',
+                      color: isDone ? '#00C2FF' : isActive ? '#00C2FF' : 'rgba(126,143,168,0.25)',
+                    }}
+                  >
+                    {isDone ? '✓' : i + 1}
+                  </motion.div>
+                  <span
+                    className="mt-2 text-[8.5px] font-mono tracking-widest transition-all duration-500"
+                    style={{
+                      color: isDone ? '#00C2FF' : isActive ? 'rgba(0,194,255,0.6)' : 'rgba(126,143,168,0.2)',
+                      fontWeight: isActive || isDone ? 700 : 400,
+                    }}
+                  >
+                    {stage.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Progress bar */}
+          <div className="relative mb-5">
+            <div className="rounded-full overflow-hidden relative" style={{ height: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* Fill */}
+              <motion.div
+                className="absolute inset-y-0 left-0 rounded-full"
+                animate={{ width: `${percent}%` }}
+                transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+                style={{ background: 'linear-gradient(90deg, #0EA5E9 0%, #00C2FF 50%, #A78BFA 100%)' }}
+              />
+              {/* Shimmer sweep */}
+              {percent > 5 && (
+                <motion.div
+                  className="absolute inset-y-0 w-16"
+                  animate={{ x: ['-64px', `${(percent / 100) * 460}px`] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                  style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent)', borderRadius: 9999 }}
+                />
+              )}
+            </div>
+            {/* Glow lead dot */}
+            {percent > 1 && percent < 100 && (
+              <motion.div
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
+                animate={{ width: `${percent}%` }}
+                transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+                style={{ right: 'auto' }}
+              >
+                <motion.div
+                  className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
+                  animate={{ scale: [1, 1.4, 1], opacity: [0.8, 1, 0.8] }}
+                  transition={{ duration: 0.9, repeat: Infinity }}
+                  style={{ background: '#00C2FF', boxShadow: '0 0 12px #00C2FF, 0 0 24px rgba(0,194,255,0.5)' }}
+                />
+              </motion.div>
+            )}
+          </div>
+
+          {/* Log terminal */}
+          <div className="rounded-xl p-3 space-y-1.5" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,194,255,0.05)', minHeight: 72 }}>
+            <AnimatePresence mode="popLayout">
+              {progress.messages.slice(-3).map((msg, i) => (
+                <motion.div
+                  key={`${i}-${msg}`}
+                  initial={{ opacity: 0, x: -10, height: 0 }}
+                  animate={{ opacity: 0.5, x: 0, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex items-center gap-2 text-[11px] font-mono"
+                  style={{ color: 'rgba(0,228,163,0.55)' }}
+                >
+                  <span style={{ color: 'rgba(0,228,163,0.3)' }}>✓</span>
+                  {msg}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            <div className="flex items-center gap-2 text-[11px] font-mono" style={{ color: 'rgba(0,194,255,0.75)' }}>
+              <motion.span
+                animate={{ opacity: [1, 0, 1] }}
+                transition={{ duration: 0.9, repeat: Infinity }}
+                style={{ color: '#00C2FF' }}
+              >▋</motion.span>
+              {progress.currentMessage}
+            </div>
           </div>
         </div>
       </motion.div>
