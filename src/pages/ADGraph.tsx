@@ -10,207 +10,206 @@ interface GNode {
   vx: number;
   vy: number;
   label: string;
-  type: 'user' | 'group' | 'computer' | 'domain';
-  privileged: boolean;
-  target: boolean;
+  shortLabel: string;
+  type: 'user' | 'group' | 'domain';
   severity: 'critical' | 'high' | 'medium' | 'low' | 'none';
+  attackType: 'K' | 'A' | 'B' | '';   // Kerberoast / AS-REP / Both / none
+  privileged: boolean;
   r: number;
   score: number;
+  ring: number;   // 0=domain, 1=groups, 2=critical, 3=high, 4=medium/low
 }
 
 interface GEdge {
   source: string;
   target: string;
-  type: 'member' | 'privilege';
+  privilege: boolean;
 }
 
-// Force constants — tuned for a stable, visually pleasing layout
-const REPULSION_K = 5000;     // repulsion coefficient
-const MIN_DIST = 35;           // min distance to prevent infinite force
-const MAX_VEL = 3.5;           // velocity clamp
-const GRAVITY = 0.0006;        // center pull strength
-const EDGE_LEN = 130;          // natural edge length
-const EDGE_K = 0.005;          // edge spring constant
-const DAMPING = 0.87;          // velocity decay per tick
+// Force simulation constants
+const REPULSION = 4800;
+const MIN_D = 32;
+const MAX_V = 2.8;
+const DAMPING = 0.86;
+const GRAVITY_GROUP = 0.0012;
+const GRAVITY_USER = 0.0004;
+const EDGE_K = 0.004;
+const EDGE_LEN = 120;
 
-// Color palette
-const TYPE_COLOR: Record<string, string> = {
-  user: '#00C2FF',
-  group: '#A78BFA',
-  computer: '#4B5A70',
-  domain: '#00E4A3',
-};
-
+// Colors
 const SEV_COLOR: Record<string, string> = {
   critical: '#FF3A5C',
-  high: '#FF8C00',
-  medium: '#FFD024',
-  low: '#4B5A70',
-  none: '#00C2FF',
+  high:     '#FF8C00',
+  medium:   '#FFD024',
+  low:      '#4B5A70',
+  none:     '#00E4A3',
 };
 
-// Golden-angle distribution — ensures nodes start well-separated
-const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+const RING_RADII = [0, 120, 220, 300, 365]; // domain, groups, critical, high, med/low
 
-function sunflower(i: number, n: number, cx: number, cy: number): [number, number] {
-  const r = Math.sqrt((i + 0.5) / n) * Math.min(cx, cy) * 0.7;
-  const theta = i * GOLDEN;
-  return [cx + Math.cos(theta) * r, cy + Math.sin(theta) * r];
+function angleSpread(i: number, total: number, offsetDeg = 0): [number, number] {
+  const a = (i / Math.max(total, 1)) * Math.PI * 2 + (offsetDeg * Math.PI) / 180;
+  return [Math.cos(a), Math.sin(a)];
+}
+
+function jitter(mag = 12): number {
+  return (Math.random() - 0.5) * mag;
 }
 
 export function ADGraph() {
   const { state } = useApp();
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selected, setSelected] = useState<GNode | null>(null);
-  const [graphStats, setGraphStats] = useState({ nodes: 0, edges: 0 });
+  const [hovered, setHovered] = useState<GNode | null>(null);
+  const [graphStats, setGraphStats] = useState({ nodes: 0, edges: 0, crits: 0, highs: 0 });
   const nodesRef = useRef<GNode[]>([]);
   const edgesRef = useRef<GEdge[]>([]);
   const animFrameRef = useRef<number | undefined>(undefined);
   const frameRef = useRef(0);
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  const canvasSize = useRef({ w: 1200, h: 800 });
 
-  // Build graph data
+  // Size canvas to container on mount
   useEffect(() => {
     const canvas = canvasRef.current;
-    const cw = canvas?.width ?? 1200;
-    const ch = canvas?.height ?? 800;
-    const cx = cw / 2;
-    const cy = ch / 2;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    const { width, height } = container.getBoundingClientRect();
+    const w = Math.max(width, 600);
+    const h = Math.max(height, 500);
+    canvas.width = w;
+    canvas.height = h;
+    canvasSize.current = { w, h };
+  }, []);
+
+  // Build graph when data changes
+  useEffect(() => {
+    const { w, h } = canvasSize.current;
+    const cx = w / 2;
+    const cy = h / 2;
 
     const nodes: GNode[] = [];
     const edges: GEdge[] = [];
 
-    // Domain node at center
+    // Domain node — pinned at center
     nodes.push({
       id: 'domain-root',
-      x: cx, y: cy,
-      vx: 0, vy: 0,
+      x: cx, y: cy, vx: 0, vy: 0,
       label: state.stats?.datasetName ?? 'DOMAIN',
-      type: 'domain',
-      privileged: true,
-      target: false,
-      severity: 'none',
-      r: 18,
-      score: 100,
+      shortLabel: 'CORP',
+      type: 'domain', severity: 'none', attackType: '',
+      privileged: true, r: 20, score: 0, ring: 0,
     });
 
-    // Privileged groups — inner ring
-    const privGroups = state.groups.filter(g => g.highvaluetarget || g.admincount).slice(0, 8);
+    // Privileged groups — ring 1
+    const privGroups = state.groups
+      .filter(g => g.highvaluetarget || g.admincount)
+      .slice(0, 8);
     privGroups.forEach((g, i) => {
-      const angle = (i / Math.max(privGroups.length, 1)) * Math.PI * 2;
-      const rRing = 100;
+      const [cos, sin] = angleSpread(i, privGroups.length, -60);
+      const r = RING_RADII[1];
       nodes.push({
         id: g.objectid,
-        x: cx + Math.cos(angle) * rRing + (Math.random() - 0.5) * 20,
-        y: cy + Math.sin(angle) * rRing + (Math.random() - 0.5) * 20,
+        x: cx + cos * r + jitter(10), y: cy + sin * r + jitter(10),
         vx: 0, vy: 0,
         label: g.name,
-        type: 'group',
-        privileged: true,
-        target: false,
-        severity: 'none',
-        r: 12,
-        score: 0,
+        shortLabel: g.name.split('@')[0].slice(0, 14),
+        type: 'group', severity: 'none', attackType: '',
+        privileged: true, r: 13, score: 0, ring: 1,
       });
     });
 
-    // Attack targets — outer sunflower
-    const targets = state.targets.slice(0, 22);
-    const totalNodes = targets.length;
-    targets.forEach((t, i) => {
-      const [x, y] = sunflower(i, totalNodes, cx, cy);
-      // Offset outward to separate from groups
-      const dx = x - cx;
-      const dy = y - cy;
-      const dist = Math.sqrt(dx * dx + dy * dy) + 1;
-      const scale = 1 + (150 / dist);
-      nodes.push({
-        id: t.user.objectid,
-        x: cx + dx * scale + (Math.random() - 0.5) * 15,
-        y: cy + dy * scale + (Math.random() - 0.5) * 15,
-        vx: 0, vy: 0,
-        label: t.user.name,
-        type: 'user',
-        privileged: t.privilegedGroups.length > 0,
-        target: true,
-        severity: t.severity,
-        r: t.severity === 'critical' ? 13 : t.severity === 'high' ? 10 : 8,
-        score: t.score,
+    // Attack targets — by severity ring
+    const crits = state.targets.filter(t => t.severity === 'critical').slice(0, 6);
+    const highs = state.targets.filter(t => t.severity === 'high').slice(0, 7);
+    const rest = state.targets.filter(t => t.severity !== 'critical' && t.severity !== 'high').slice(0, 9);
+
+    const placeTargets = (list: typeof crits, ring: number, rOff = 0) => {
+      list.forEach((t, i) => {
+        const [cos, sin] = angleSpread(i, list.length, 15 * ring);
+        const rad = RING_RADII[ring] + rOff;
+        const aType: 'K' | 'A' | 'B' | '' =
+          t.attackType === 'both' ? 'B' :
+          t.attackType === 'kerberoast' ? 'K' :
+          t.attackType === 'asrep' ? 'A' : '';
+        const nodeR =
+          t.severity === 'critical' ? 17 :
+          t.severity === 'high' ? 13 :
+          t.severity === 'medium' ? 10 : 8;
+        nodes.push({
+          id: t.user.objectid,
+          x: cx + cos * rad + jitter(18), y: cy + sin * rad + jitter(18),
+          vx: 0, vy: 0,
+          label: t.user.name,
+          shortLabel: (t.user.samaccountname || t.user.name.split('@')[0]).slice(0, 12),
+          type: 'user',
+          severity: t.severity,
+          attackType: aType,
+          privileged: t.privilegedGroups.length > 0,
+          r: nodeR,
+          score: t.score,
+          ring,
+        });
       });
-    });
+    };
+
+    placeTargets(crits, 2);
+    placeTargets(highs, 3);
+    placeTargets(rest, 4, 20);
 
     // Edges: targets → their group nodes
-    targets.slice(0, 18).forEach(t => {
+    const allTargets = [...crits, ...highs, ...rest];
+    allTargets.forEach(t => {
       t.user.memberof.forEach(gid => {
         const gNode = nodes.find(n => n.id === gid);
-        if (gNode) {
-          edges.push({
-            source: t.user.objectid,
-            target: gid,
-            type: t.privilegedGroups.length > 0 ? 'privilege' : 'member',
-          });
+        if (gNode && gNode.type === 'group') {
+          edges.push({ source: t.user.objectid, target: gid, privilege: t.privilegedGroups.length > 0 });
         }
       });
-      // Connect privileged groups → domain
-      if (t.daDistance <= 2) {
-        const groupNode = nodes.find(n => n.type === 'group' && t.user.memberof.includes(n.id));
-        if (groupNode) {
-          edges.push({ source: groupNode.id, target: 'domain-root', type: 'privilege' });
-        }
-      }
     });
 
-    // Dedupe edges
+    // Edges: privileged groups → domain
+    privGroups.forEach(g => {
+      edges.push({ source: g.objectid, target: 'domain-root', privilege: true });
+    });
+
+    // Deduplicate edges
     const edgeSet = new Set<string>();
     const deduped: GEdge[] = [];
     edges.forEach(e => {
-      const key = `${e.source}|${e.target}`;
-      if (!edgeSet.has(key)) { edgeSet.add(key); deduped.push(e); }
+      const k = `${e.source}|${e.target}`;
+      if (!edgeSet.has(k)) { edgeSet.add(k); deduped.push(e); }
     });
 
     nodesRef.current = nodes;
     edgesRef.current = deduped;
-    setGraphStats({ nodes: nodes.length, edges: deduped.length });
     frameRef.current = 0;
+    setGraphStats({
+      nodes: nodes.length, edges: deduped.length,
+      crits: crits.length, highs: highs.length,
+    });
   }, [state.targets, state.groups, state.stats]);
 
-  // Draw background grid + node glow helper
-  function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    const step = 40;
-    ctx.strokeStyle = 'rgba(0,194,255,0.025)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < w; x += step) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-    }
-    for (let y = 0; y < h; y += step) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-    }
-  }
-
-  // Arrowhead
-  function drawArrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, targetR: number) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 1) return;
-    const ux = dx / len;
-    const uy = dy / len;
-    // Arrow base at target node edge
-    const ax = x2 - ux * (targetR + 4);
-    const ay = y2 - uy * (targetR + 4);
-    const perp = 4;
+  // Draw helpers
+  const drawRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(ax - ux * 8 - uy * perp, ay - uy * 8 + ux * perp);
-    ctx.lineTo(ax - ux * 8 + uy * perp, ay - uy * 8 - ux * perp);
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
     ctx.closePath();
-    ctx.fill();
-  }
+  };
 
-  // Force simulation + render
+  // Simulation + render loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -226,45 +225,52 @@ export function ADGraph() {
       const cx = cw / 2;
       const cy = ch / 2;
 
-      // Build lookup map for performance
       const nodeMap = new Map<string, GNode>();
       nodes.forEach(n => nodeMap.set(n.id, n));
 
       // Forces
       nodes.forEach(n => {
-        // Repulsion from all other nodes (with min-distance guard)
+        if (n.ring === 0) return; // domain pinned
+
+        // Repulsion
         nodes.forEach(other => {
           if (other.id === n.id) return;
           const dx = n.x - other.x;
           const dy = n.y - other.y;
-          const d2 = dx * dx + dy * dy;
-          const dist = Math.max(Math.sqrt(d2), MIN_DIST);
-          const force = REPULSION_K / (dist * dist);
-          n.vx += (dx / dist) * force * 0.01;
-          n.vy += (dy / dist) * force * 0.01;
+          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), MIN_D);
+          const f = REPULSION / (dist * dist);
+          n.vx += (dx / dist) * f * 0.01;
+          n.vy += (dy / dist) * f * 0.01;
         });
 
-        // Center gravity (stronger for groups, weaker for users)
-        const grav = n.type === 'group' ? GRAVITY * 2.5 : GRAVITY;
+        // Gravity toward center
+        const grav = n.ring === 1 ? GRAVITY_GROUP : GRAVITY_USER;
         n.vx += (cx - n.x) * grav;
         n.vy += (cy - n.y) * grav;
 
-        // Velocity cap
-        const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
-        if (speed > MAX_VEL) { n.vx = n.vx / speed * MAX_VEL; n.vy = n.vy / speed * MAX_VEL; }
+        // Radial constraint — keep in rough ring
+        const tx = cx, ty = cy;
+        const dx = n.x - tx, dy = n.y - ty;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const targetR = RING_RADII[n.ring] ?? 300;
+        const pull = (d - targetR) * 0.0003;
+        n.vx -= (dx / d) * pull;
+        n.vy -= (dy / d) * pull;
 
-        // Damping + integrate
+        // Speed cap + damping + integrate
+        const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (speed > MAX_V) { n.vx = n.vx / speed * MAX_V; n.vy = n.vy / speed * MAX_V; }
         n.vx *= DAMPING;
         n.vy *= DAMPING;
         n.x += n.vx;
         n.y += n.vy;
 
-        // Elastic boundary push
-        const margin = 55;
-        if (n.x < margin) n.vx += (margin - n.x) * 0.12;
-        if (n.x > cw - margin) n.vx -= (n.x - (cw - margin)) * 0.12;
-        if (n.y < margin) n.vy += (margin - n.y) * 0.12;
-        if (n.y > ch - margin) n.vy -= (n.y - (ch - margin)) * 0.12;
+        // Soft boundary
+        const m = 50;
+        if (n.x < m) n.vx += (m - n.x) * 0.1;
+        if (n.x > cw - m) n.vx -= (n.x - (cw - m)) * 0.1;
+        if (n.y < m) n.vy += (m - n.y) * 0.1;
+        if (n.y > ch - m) n.vy -= (n.y - (ch - m)) * 0.1;
       });
 
       // Edge spring
@@ -272,23 +278,25 @@ export function ADGraph() {
         const s = nodeMap.get(e.source);
         const t = nodeMap.get(e.target);
         if (!s || !t) return;
-        const dx = t.x - s.x;
-        const dy = t.y - s.y;
+        if (s.ring === 0 && t.ring === 0) return;
+        const dx = t.x - s.x, dy = t.y - s.y;
         const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-        const force = (dist - EDGE_LEN) * EDGE_K;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        s.vx += fx; s.vy += fy;
-        t.vx -= fx; t.vy -= fy;
+        const f = (dist - EDGE_LEN) * EDGE_K;
+        const fx = (dx / dist) * f, fy = (dy / dist) * f;
+        if (s.ring !== 0) { s.vx += fx; s.vy += fy; }
+        if (t.ring !== 0) { t.vx -= fx; t.vy -= fy; }
       });
 
-      // ── Draw ────────────────────────────────────────────────────
+      // ── DRAW ──────────────────────────────────────────────────
       ctx.clearRect(0, 0, cw, ch);
+
+      // Grid
+      ctx.strokeStyle = 'rgba(0,194,255,0.02)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < cw; x += 44) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke(); }
+      for (let y = 0; y < ch; y += 44) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke(); }
+
       ctx.save();
-
-      // Grid background
-      drawGrid(ctx, cw, ch);
-
       ctx.translate(pan.x, pan.y);
       ctx.scale(zoom, zoom);
 
@@ -297,153 +305,151 @@ export function ADGraph() {
         const s = nodeMap.get(e.source);
         const t = nodeMap.get(e.target);
         if (!s || !t) return;
-
-        const dx = t.x - s.x;
-        const dy = t.y - s.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        // Gradient stroke
         const grad = ctx.createLinearGradient(s.x, s.y, t.x, t.y);
-        if (e.type === 'privilege') {
-          grad.addColorStop(0, 'rgba(255,58,92,0.0)');
-          grad.addColorStop(0.5, 'rgba(255,58,92,0.35)');
-          grad.addColorStop(1, 'rgba(255,140,0,0.2)');
+        if (e.privilege) {
+          grad.addColorStop(0, 'rgba(255,58,92,0)');
+          grad.addColorStop(0.5, 'rgba(255,58,92,0.4)');
+          grad.addColorStop(1, 'rgba(255,140,0,0.15)');
         } else {
-          grad.addColorStop(0, 'rgba(0,194,255,0.0)');
-          grad.addColorStop(0.5, 'rgba(0,194,255,0.2)');
-          grad.addColorStop(1, 'rgba(167,139,250,0.15)');
+          grad.addColorStop(0, 'rgba(0,194,255,0)');
+          grad.addColorStop(0.5, 'rgba(0,194,255,0.18)');
+          grad.addColorStop(1, 'rgba(167,139,250,0.1)');
         }
-
         ctx.beginPath();
         ctx.moveTo(s.x, s.y);
         ctx.lineTo(t.x, t.y);
         ctx.strokeStyle = grad;
-        ctx.lineWidth = e.type === 'privilege' ? 1.5 : 1;
-        ctx.setLineDash(e.type === 'privilege' ? [5, 4] : []);
+        ctx.lineWidth = e.privilege ? 1.5 : 0.8;
+        ctx.setLineDash(e.privilege ? [6, 4] : []);
         ctx.stroke();
         ctx.setLineDash([]);
 
         // Arrowhead on privilege edges
-        if (e.type === 'privilege' && dist > 20) {
-          ctx.fillStyle = 'rgba(255,58,92,0.5)';
-          drawArrow(ctx, s.x, s.y, t.x, t.y, t.r);
+        if (e.privilege) {
+          const dx = t.x - s.x, dy = t.y - s.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len > 1) {
+            const ux = dx / len, uy = dy / len;
+            const ax = t.x - ux * (t.r + 5), ay = t.y - uy * (t.r + 5);
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax - ux * 9 - uy * 4, ay - uy * 9 + ux * 4);
+            ctx.lineTo(ax - ux * 9 + uy * 4, ay - uy * 9 - ux * 4);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(255,58,92,0.55)';
+            ctx.fill();
+          }
         }
       });
 
       // ── Nodes ──
       nodes.forEach(n => {
         const isSelected = selected?.id === n.id;
-        const color = n.privileged && n.type !== 'domain'
-          ? SEV_COLOR[n.severity] ?? '#FF3A5C'
-          : TYPE_COLOR[n.type] ?? '#00C2FF';
-        const pulse = Math.sin(frame * 0.04 + n.x * 0.01) * 0.5 + 0.5; // 0–1
+        const isHovered = hovered?.id === n.id;
+        const color = n.severity !== 'none' ? (SEV_COLOR[n.severity] ?? '#00C2FF') : n.type === 'domain' ? '#00E4A3' : '#A78BFA';
+        const pulse = Math.sin(frame * 0.04 + n.x * 0.008) * 0.5 + 0.5;
 
-        // ── Outer glow layers ──
-        if (n.severity === 'critical' || n.type === 'domain') {
-          // Animated pulse ring for critical nodes
-          const ringR = n.r + 8 + pulse * 8;
-          const ringAlpha = 0.05 + pulse * 0.08;
+        // Critical nodes: animated multi-ring pulse
+        if (n.severity === 'critical') {
+          for (let layer = 3; layer >= 1; layer--) {
+            const layerR = n.r + 6 + layer * 7 + pulse * 5;
+            const alpha = (0.03 + pulse * 0.04) / layer;
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, layerR, 0, Math.PI * 2);
+            ctx.fillStyle = `${color}${Math.round(alpha * 255).toString(16).padStart(2, '0')}`;
+            ctx.fill();
+          }
+        } else if (n.type === 'domain') {
+          // Domain: persistent outer ring
           ctx.beginPath();
-          ctx.arc(n.x, n.y, ringR, 0, Math.PI * 2);
-          ctx.fillStyle = `${color}${Math.round(ringAlpha * 255).toString(16).padStart(2, '0')}`;
+          ctx.arc(n.x, n.y, n.r + 10 + pulse * 4, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(0,228,163,0.06)';
           ctx.fill();
         }
 
-        // Static glow halo
-        if (n.privileged || n.type === 'domain' || isSelected) {
+        // Hover/selected glow halo
+        if (isSelected || isHovered) {
           ctx.beginPath();
-          ctx.arc(n.x, n.y, n.r + 6, 0, Math.PI * 2);
-          const glowAlpha = isSelected ? 0.3 : 0.18;
-          ctx.fillStyle = color + Math.round(glowAlpha * 255).toString(16).padStart(2, '0');
+          ctx.arc(n.x, n.y, n.r + 8, 0, Math.PI * 2);
+          ctx.fillStyle = color + '25';
           ctx.fill();
         }
 
         // ── Node body ──
-        ctx.beginPath();
         if (n.type === 'group') {
-          // Rounded rectangle for groups (manual path for browser compat)
-          const s = n.r * 1.4;
-          const gx = n.x - s / 2;
-          const gy = n.y - s / 2;
-          const gr = 5;
-          ctx.moveTo(gx + gr, gy);
-          ctx.lineTo(gx + s - gr, gy);
-          ctx.arcTo(gx + s, gy, gx + s, gy + gr, gr);
-          ctx.lineTo(gx + s, gy + s - gr);
-          ctx.arcTo(gx + s, gy + s, gx + s - gr, gy + s, gr);
-          ctx.lineTo(gx + gr, gy + s);
-          ctx.arcTo(gx, gy + s, gx, gy + s - gr, gr);
-          ctx.lineTo(gx, gy + gr);
-          ctx.arcTo(gx, gy, gx + gr, gy, gr);
-          ctx.closePath();
+          const s = n.r * 2;
+          const gx = n.x - s / 2, gy = n.y - s / 2;
+          drawRoundRect(ctx, gx, gy, s, s, 5);
         } else if (n.type === 'domain') {
-          // Diamond for domain
-          ctx.moveTo(n.x, n.y - n.r * 1.3);
-          ctx.lineTo(n.x + n.r * 1.1, n.y);
-          ctx.lineTo(n.x, n.y + n.r * 1.3);
-          ctx.lineTo(n.x - n.r * 1.1, n.y);
+          ctx.beginPath();
+          ctx.moveTo(n.x, n.y - n.r * 1.4);
+          ctx.lineTo(n.x + n.r * 1.2, n.y);
+          ctx.lineTo(n.x, n.y + n.r * 1.4);
+          ctx.lineTo(n.x - n.r * 1.2, n.y);
           ctx.closePath();
         } else {
+          ctx.beginPath();
           ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
         }
 
-        // Fill with gradient
-        const nodeGrad = ctx.createRadialGradient(n.x - n.r * 0.3, n.y - n.r * 0.3, 0, n.x, n.y, n.r * 1.5);
-        nodeGrad.addColorStop(0, color + '30');
-        nodeGrad.addColorStop(1, color + '08');
-        ctx.fillStyle = nodeGrad;
+        const bg = ctx.createRadialGradient(n.x - n.r * 0.3, n.y - n.r * 0.3, 0, n.x, n.y, n.r * 1.6);
+        bg.addColorStop(0, color + '28');
+        bg.addColorStop(1, color + '06');
+        ctx.fillStyle = bg;
         ctx.fill();
 
-        // Stroke
-        ctx.strokeStyle = isSelected
-          ? color + 'ff'
-          : color + (n.target || n.privileged ? 'cc' : '55');
-        ctx.lineWidth = isSelected ? 2.5 : (n.type === 'domain' ? 2 : 1.5);
+        ctx.strokeStyle = isSelected || isHovered ? color : color + 'aa';
+        ctx.lineWidth = isSelected ? 2.5 : (n.type === 'domain' ? 2.5 : 1.5);
         ctx.stroke();
 
-        // Inner dot for user nodes (looks like a crosshair target)
-        if (n.type === 'user' && n.target) {
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, 2.5, 0, Math.PI * 2);
-          ctx.fillStyle = color + 'cc';
-          ctx.fill();
+        // ── Attack type badge inside node ──
+        if (n.attackType) {
+          ctx.font = `800 ${n.r > 12 ? 10 : 8}px 'JetBrains Mono', monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = color + 'ff';
+          ctx.fillText(n.attackType, n.x, n.y);
+        } else if (n.type === 'domain') {
+          ctx.font = '700 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#00E4A3cc';
+          ctx.fillText('DA', n.x, n.y);
         }
 
-        // ── Label ──
-        const shortLabel = n.label.split('.')[0].split('\\').pop()?.slice(0, 13) ?? n.label;
-        const labelY = n.y + n.r + (n.type === 'group' ? n.r * 0.9 : 0) + 14;
+        // ── Label below node ──
+        const labelY = n.type === 'group'
+          ? n.y + n.r + 14
+          : n.y + n.r + 13;
 
-        ctx.font = `${n.target || n.privileged || n.type === 'domain' ? 600 : 400} 9px 'JetBrains Mono', monospace`;
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = `${n.severity === 'critical' || n.severity === 'high' ? 700 : 500} ${n.severity === 'critical' ? 10 : 9}px 'JetBrains Mono', monospace`;
         ctx.textAlign = 'center';
-        const tw = ctx.measureText(shortLabel).width;
+        const labelW = ctx.measureText(n.shortLabel).width;
 
-        // Label background pill
-        if (n.target || n.type === 'domain' || n.type === 'group') {
-          ctx.fillStyle = 'rgba(6,10,18,0.75)';
+        // Background pill for important nodes
+        if (n.severity === 'critical' || n.severity === 'high' || n.type !== 'user' || isSelected || isHovered) {
+          ctx.fillStyle = 'rgba(6,10,18,0.82)';
           ctx.beginPath();
-          ctx.roundRect(n.x - tw / 2 - 4, labelY - 9, tw + 8, 13, 4);
+          ctx.roundRect
+            ? ctx.roundRect(n.x - labelW / 2 - 4, labelY - 10, labelW + 8, 13, 4)
+            : (() => { ctx.rect(n.x - labelW / 2 - 4, labelY - 10, labelW + 8, 13); })();
           ctx.fill();
         }
 
-        ctx.fillStyle = n.severity === 'critical'
-          ? '#FF3A5C'
-          : n.severity === 'high'
-          ? '#FF8C00'
-          : n.target
-          ? color
-          : n.type === 'domain'
-          ? '#00E4A3'
-          : n.type === 'group'
-          ? '#A78BFA'
+        ctx.fillStyle = n.severity === 'critical' ? '#FF3A5C'
+          : n.severity === 'high' ? '#FF8C00'
+          : n.type === 'domain' ? '#00E4A3'
+          : n.type === 'group' ? '#A78BFA'
+          : n.severity === 'medium' ? '#FFD024'
           : 'rgba(126,143,168,0.5)';
-        ctx.fillText(shortLabel, n.x, labelY);
+        ctx.fillText(n.shortLabel, n.x, labelY);
 
-        // Score badge for high-priority targets
-        if (n.target && n.score >= 70) {
+        // Score line below label for critical/high
+        if (n.score >= 65) {
           ctx.font = `700 8px 'JetBrains Mono', monospace`;
-          const scoreStr = String(n.score);
-          ctx.fillStyle = SEV_COLOR[n.severity] ?? '#00C2FF';
-          ctx.fillText(scoreStr, n.x, labelY + 11);
+          ctx.fillStyle = color + 'cc';
+          ctx.fillText(String(n.score), n.x, labelY + 11);
         }
       });
 
@@ -453,11 +459,11 @@ export function ADGraph() {
 
     animFrameRef.current = requestAnimationFrame(tick);
     return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
-  }, [zoom, pan, selected]);
+  }, [zoom, pan, selected, hovered]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    setZoom(z => Math.max(0.25, Math.min(4, z - e.deltaY * 0.001)));
+    setZoom(z => Math.max(0.3, Math.min(4, z - e.deltaY * 0.001)));
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -466,173 +472,190 @@ export function ADGraph() {
   }, []);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDragging.current) return;
-    const dx = e.clientX - lastMouse.current.x;
-    const dy = e.clientY - lastMouse.current.y;
-    setPan(p => ({ x: p.x + dx, y: p.y + dy }));
-    lastMouse.current = { x: e.clientX, y: e.clientY };
-  }, []);
-
-  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    isDragging.current = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left - pan.x) / zoom;
     const my = (e.clientY - rect.top - pan.y) / zoom;
-    const node = nodesRef.current.find(n => Math.hypot(n.x - mx, n.y - my) < n.r + 8);
-    setSelected(node ?? null);
+    const node = nodesRef.current.find(n => Math.hypot(n.x - mx, n.y - my) < n.r + 10);
+    setHovered(node ?? null);
+
+    if (isDragging.current) {
+      const dx = e.clientX - lastMouse.current.x;
+      const dy = e.clientY - lastMouse.current.y;
+      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+    }
   }, [pan, zoom]);
 
-  const fitView = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
+  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left - pan.x) / zoom;
+    const my = (e.clientY - rect.top - pan.y) / zoom;
+    const node = nodesRef.current.find(n => Math.hypot(n.x - mx, n.y - my) < n.r + 10);
+    setSelected(prev => prev?.id === node?.id ? null : (node ?? null));
+  }, [pan, zoom]);
 
-  const resetLayout = useCallback(() => {
-    // Re-trigger data build by clearing and rebuilding node positions
-    nodesRef.current = nodesRef.current.map((n, i) => {
-      const canvas = canvasRef.current;
-      const cx = (canvas?.width ?? 1200) / 2;
-      const cy = (canvas?.height ?? 800) / 2;
-      const [x, y] = n.type === 'domain'
-        ? [cx, cy]
-        : n.type === 'group'
-        ? [cx + Math.cos(i * 0.8) * 100, cy + Math.sin(i * 0.8) * 100]
-        : sunflower(i, nodesRef.current.length, cx, cy);
-      return { ...n, x, y, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2 };
-    });
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
+  const fitView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
   return (
     <div className="h-full flex flex-col" style={{ background: '#060A12' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 flex-shrink-0 border-b"
-        style={{ borderColor: 'rgba(0,194,255,0.08)', background: 'rgba(6,10,18,0.9)', backdropFilter: 'blur(16px)' }}>
-        <div className="flex items-center gap-2.5">
+      <div className="flex items-center justify-between px-5 py-3 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(0,194,255,0.07)', background: 'rgba(6,10,18,0.95)', backdropFilter: 'blur(16px)' }}>
+        <div className="flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, rgba(0,194,255,0.2), rgba(167,139,250,0.2))', border: '1px solid rgba(0,194,255,0.2)' }}>
+            style={{ background: 'rgba(0,194,255,0.1)', border: '1px solid rgba(0,194,255,0.18)' }}>
             <Network size={13} style={{ color: '#00C2FF' }} />
           </div>
           <span className="font-semibold text-sm" style={{ color: '#EEF2FF' }}>AD Graph Explorer</span>
-          <span className="text-xs font-mono px-2.5 py-0.5 rounded-full"
-            style={{ background: 'rgba(0,194,255,0.08)', color: '#00C2FF', border: '1px solid rgba(0,194,255,0.12)' }}>
-            {graphStats.nodes} nodes · {graphStats.edges} edges
-          </span>
+          <div className="flex items-center gap-2 ml-1">
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(255,58,92,0.1)', color: '#FF3A5C', border: '1px solid rgba(255,58,92,0.18)' }}>
+              {graphStats.crits} CRITICAL
+            </span>
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(255,140,0,0.1)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.18)' }}>
+              {graphStats.highs} HIGH
+            </span>
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(0,194,255,0.07)', color: 'rgba(0,194,255,0.5)', border: '1px solid rgba(0,194,255,0.1)' }}>
+              {graphStats.nodes} nodes
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <button onClick={resetLayout} className="h-8 px-3 rounded-xl text-xs flex items-center gap-1.5 transition-all"
-            style={{ color: 'rgba(0,194,255,0.5)', background: 'transparent' }}
+        <div className="flex items-center gap-1">
+          <button onClick={() => { nodesRef.current = nodesRef.current.map(n => ({ ...n, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2 })); setZoom(1); setPan({x:0,y:0}); }}
+            className="h-8 px-3 rounded-xl text-xs flex items-center gap-1.5 transition-all"
+            style={{ color: 'rgba(0,194,255,0.4)', background: 'transparent' }}
             onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,194,255,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#00C2FF'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'rgba(0,194,255,0.5)'; }}>
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'rgba(0,194,255,0.4)'; }}>
             <RefreshCw size={11} /> Reset
           </button>
-          <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/5" style={{ color: 'rgba(126,143,168,0.6)' }}><ZoomIn size={13} /></button>
-          <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/5" style={{ color: 'rgba(126,143,168,0.6)' }}><ZoomOut size={13} /></button>
-          <button onClick={fitView} className="h-8 px-3 rounded-xl text-xs flex items-center gap-1.5 transition-all hover:bg-white/5 font-mono"
-            style={{ color: 'rgba(126,143,168,0.6)' }}><Maximize size={11} /> Fit</button>
-          <div className="w-px h-5 mx-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
-          <span className="text-xs font-mono px-2 py-0.5 rounded-lg"
-            style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(126,143,168,0.4)' }}>
+          <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-white/5 transition-all" style={{ color: 'rgba(126,143,168,0.5)' }}><ZoomIn size={13} /></button>
+          <button onClick={() => setZoom(z => Math.max(0.3, z - 0.25))} className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-white/5 transition-all" style={{ color: 'rgba(126,143,168,0.5)' }}><ZoomOut size={13} /></button>
+          <button onClick={fitView} className="h-8 px-3 rounded-xl text-xs hover:bg-white/5 font-mono transition-all flex items-center gap-1.5" style={{ color: 'rgba(126,143,168,0.5)' }}><Maximize size={11}/> Fit</button>
+          <span className="text-xs font-mono px-2 py-0.5 rounded-lg ml-1"
+            style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(126,143,168,0.35)' }}>
             {Math.round(zoom * 100)}%
           </span>
         </div>
       </div>
 
-      <div className="flex-1 relative overflow-hidden">
+      {/* Canvas area */}
+      <div ref={containerRef} className="flex-1 relative overflow-hidden">
         <canvas
           ref={canvasRef}
-          width={1400}
-          height={900}
           className="w-full h-full"
-          style={{ cursor: isDragging.current ? 'grabbing' : 'grab', display: 'block' }}
+          style={{ cursor: isDragging.current ? 'grabbing' : hovered ? 'pointer' : 'grab' }}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={() => { isDragging.current = false; }}
+          onMouseUp={() => { isDragging.current = false; }}
+          onClick={handleClick}
+          onMouseLeave={() => { isDragging.current = false; setHovered(null); }}
         />
 
-        {/* Legend */}
-        <div className="absolute bottom-4 left-4 p-3.5 rounded-2xl"
-          style={{ background: 'rgba(6,10,18,0.92)', border: '1px solid rgba(0,194,255,0.08)', backdropFilter: 'blur(16px)' }}>
-          <div className="text-[9px] font-mono tracking-widest mb-2.5" style={{ color: 'rgba(0,194,255,0.35)' }}>NODE TYPES</div>
+        {/* Legend — bottom left */}
+        <div className="absolute bottom-4 left-4 rounded-2xl p-4"
+          style={{ background: 'rgba(6,10,18,0.93)', border: '1px solid rgba(0,194,255,0.08)', backdropFilter: 'blur(16px)', minWidth: 170 }}>
+          <div className="text-[9px] font-mono tracking-[0.18em] mb-3" style={{ color: 'rgba(0,194,255,0.3)' }}>SEVERITY · NODE TYPE</div>
           {[
-            { color: '#00C2FF', label: 'User / Target', shape: 'circle' },
-            { color: '#A78BFA', label: 'Group', shape: 'square' },
-            { color: '#00E4A3', label: 'Domain Root', shape: 'diamond' },
-            { color: '#FF3A5C', label: 'Critical / Privileged', shape: 'circle' },
-          ].map(l => (
-            <div key={l.label} className="flex items-center gap-2.5 mb-1.5">
-              <div className="w-2.5 h-2.5 flex-shrink-0 rounded-sm" style={{
-                background: l.color,
-                borderRadius: l.shape === 'circle' ? '50%' : l.shape === 'diamond' ? '2px' : '3px',
-                transform: l.shape === 'diamond' ? 'rotate(45deg) scale(0.8)' : 'none',
-                boxShadow: `0 0 6px ${l.color}80`,
+            { color: '#FF3A5C', label: 'Critical target', shape: 'circle' },
+            { color: '#FF8C00', label: 'High target', shape: 'circle' },
+            { color: '#FFD024', label: 'Medium target', shape: 'circle' },
+            { color: '#A78BFA', label: 'Privileged group', shape: 'square' },
+            { color: '#00E4A3', label: 'Domain root', shape: 'diamond' },
+          ].map(({ color, label, shape }) => (
+            <div key={label} className="flex items-center gap-2.5 mb-2">
+              <div className="w-3 h-3 flex-shrink-0 rounded-sm" style={{
+                background: color,
+                borderRadius: shape === 'circle' ? '50%' : shape === 'diamond' ? '2px' : '3px',
+                transform: shape === 'diamond' ? 'rotate(45deg) scale(0.85)' : 'none',
+                boxShadow: `0 0 5px ${color}60`,
               }} />
-              <span className="text-[10px] font-mono" style={{ color: 'rgba(126,143,168,0.7)' }}>{l.label}</span>
+              <span className="text-[10px] font-mono" style={{ color: 'rgba(126,143,168,0.65)' }}>{label}</span>
             </div>
           ))}
-          <div className="mt-2 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.04)' }}>
-            <div className="text-[9px] font-mono tracking-widest mb-2" style={{ color: 'rgba(0,194,255,0.35)' }}>EDGES</div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-8 h-px" style={{ background: 'rgba(0,194,255,0.4)' }} />
-              <span className="text-[10px] font-mono" style={{ color: 'rgba(126,143,168,0.6)' }}>Membership</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-8" style={{ borderTop: '1px dashed rgba(255,58,92,0.5)', display: 'block' }} />
-              <span className="text-[10px] font-mono" style={{ color: 'rgba(126,143,168,0.6)' }}>Privilege path</span>
-            </div>
+          <div className="mt-3 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="text-[9px] font-mono tracking-[0.18em] mb-2" style={{ color: 'rgba(0,194,255,0.3)' }}>ATTACK TYPE · IN NODE</div>
+            {[['K', 'Kerberoast', '#00C2FF'], ['A', 'AS-REP Roast', '#A78BFA'], ['B', 'Both', '#FF3A5C']].map(([badge, label, color]) => (
+              <div key={badge} className="flex items-center gap-2.5 mb-1.5">
+                <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: `${color}15`, border: `1px solid ${color}40`, color, fontSize: 8, fontWeight: 800, fontFamily: 'monospace' }}>
+                  {badge}
+                </div>
+                <span className="text-[10px] font-mono" style={{ color: 'rgba(126,143,168,0.55)' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2.5 pt-2.5 text-[9px] font-mono space-y-0.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'rgba(126,143,168,0.3)' }}>
+            <div>Scroll — zoom</div>
+            <div>Drag — pan</div>
+            <div>Click — select</div>
           </div>
         </div>
 
-        {/* Selected node info */}
-        {selected && (
+        {/* Selected/Hovered node info — top right */}
+        {(selected ?? hovered) && (
           <motion.div
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 12 }}
-            className="absolute top-4 right-4 p-4 rounded-2xl"
+            exit={{ opacity: 0 }}
+            className="absolute top-4 right-4 rounded-2xl p-4"
             style={{
-              background: 'rgba(6,10,18,0.95)',
-              border: `1px solid ${TYPE_COLOR[selected.type] ?? '#00C2FF'}20`,
+              background: 'rgba(6,10,18,0.97)',
+              border: `1px solid ${SEV_COLOR[(selected ?? hovered)!.severity] ?? '#00C2FF'}18`,
               backdropFilter: 'blur(16px)',
-              minWidth: 200,
-              boxShadow: `0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px ${TYPE_COLOR[selected.type] ?? '#00C2FF'}15`,
+              minWidth: 190,
+              boxShadow: `0 4px 24px rgba(0,0,0,0.6)`,
             }}
           >
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-2.5 h-2.5 rounded-full"
-                style={{
-                  background: selected.privileged ? SEV_COLOR[selected.severity] ?? '#FF3A5C' : TYPE_COLOR[selected.type],
-                  boxShadow: `0 0 8px ${selected.privileged ? '#FF3A5C' : TYPE_COLOR[selected.type]}`,
-                }} />
-              <span className="font-mono text-xs font-bold truncate" style={{ color: '#EEF2FF' }}>
-                {selected.label.split('.')[0].split('\\').pop()}
-              </span>
-            </div>
-            <div className="text-[11px] space-y-1.5 font-mono" style={{ color: 'rgba(126,143,168,0.7)' }}>
-              <div>Type: <span style={{ color: TYPE_COLOR[selected.type] }}>{selected.type}</span></div>
-              {selected.severity !== 'none' && (
-                <div>Severity: <span style={{ color: SEV_COLOR[selected.severity] }}>{selected.severity.toUpperCase()}</span></div>
-              )}
-              {selected.score > 0 && (
-                <div>Score: <span style={{ color: '#00C2FF' }}>{selected.score}/100</span></div>
-              )}
-              {selected.privileged && <div style={{ color: '#FF3A5C' }}>⚡ Privileged</div>}
-              {selected.target && <div style={{ color: '#00C2FF' }}>🎯 Attack target</div>}
-            </div>
+            {(() => {
+              const n = selected ?? hovered!;
+              const c = n.severity !== 'none' ? SEV_COLOR[n.severity] : n.type === 'domain' ? '#00E4A3' : '#A78BFA';
+              return (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: c, boxShadow: `0 0 6px ${c}` }} />
+                    <span className="font-mono text-xs font-bold truncate" style={{ color: '#EEF2FF' }}>{n.shortLabel}</span>
+                    {n.attackType && (
+                      <span className="ml-auto font-mono text-[9px] font-black px-1.5 py-0.5 rounded-lg"
+                        style={{ background: c + '18', color: c, border: `1px solid ${c}30` }}>{n.attackType}</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] font-mono space-y-1.5" style={{ color: 'rgba(126,143,168,0.65)' }}>
+                    {n.severity !== 'none' && (
+                      <div className="flex justify-between">
+                        <span>Severity</span>
+                        <span style={{ color: c, fontWeight: 700 }}>{n.severity.toUpperCase()}</span>
+                      </div>
+                    )}
+                    {n.score > 0 && (
+                      <div className="flex justify-between">
+                        <span>Score</span>
+                        <span style={{ color: '#00C2FF', fontWeight: 700 }}>{n.score}/100</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>Type</span>
+                      <span style={{ color: 'rgba(238,242,255,0.6)' }}>{n.type}</span>
+                    </div>
+                    {n.privileged && (
+                      <div style={{ color: '#FF3A5C' }} className="font-semibold">⚡ Privileged path</div>
+                    )}
+                    {n.attackType === 'K' && <div style={{ color: '#00C2FF' }}>Kerberoastable SPN</div>}
+                    {n.attackType === 'A' && <div style={{ color: '#A78BFA' }}>Pre-auth disabled</div>}
+                    {n.attackType === 'B' && <div style={{ color: '#FF3A5C' }}>Dual-vector target</div>}
+                  </div>
+                </>
+              );
+            })()}
           </motion.div>
         )}
-
-        {/* Tip */}
-        <div className="absolute bottom-4 right-4 text-[10px] font-mono px-3 py-1.5 rounded-xl"
-          style={{ background: 'rgba(6,10,18,0.8)', color: 'rgba(126,143,168,0.35)', border: '1px solid rgba(255,255,255,0.04)' }}>
-          Scroll: zoom · Drag: pan · Click: select
-        </div>
       </div>
     </div>
   );

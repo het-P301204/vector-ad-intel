@@ -467,35 +467,37 @@ function ImportProgressOverlay() {
             )}
           </div>
 
-          {/* Terminal log */}
-          <div className="rounded-2xl px-4 py-3.5 space-y-1.5"
-            style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(0,194,255,0.05)', minHeight: 80 }}>
-            <AnimatePresence mode="popLayout">
-              {progress.messages.slice(-3).map((msg) => (
-                <motion.div
-                  key={msg}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 0.45, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.3, ease: 'easeOut' }}
-                  className="flex items-center gap-2 text-[11px] font-mono"
-                  style={{ color: '#00E4A3' }}
-                >
-                  <span style={{ color: 'rgba(0,228,163,0.4)', fontSize: 8 }}>✓</span>
-                  {msg}
-                </motion.div>
-              ))}
-            </AnimatePresence>
-            {progress.currentMessage && (
-              <div className="flex items-center gap-2 text-[11px] font-mono" style={{ color: 'rgba(0,194,255,0.8)' }}>
-                <motion.span
-                  animate={{ opacity: [1, 0] }}
-                  transition={{ duration: 0.6, repeat: Infinity, repeatType: 'reverse' }}
-                  style={{ fontSize: 10 }}
-                >▋</motion.span>
-                {progress.currentMessage}
-              </div>
-            )}
+          {/* Terminal log — fixed height, no resize */}
+          <div className="rounded-2xl px-4 overflow-hidden"
+            style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(0,194,255,0.05)', height: 96 }}>
+            <div className="flex flex-col justify-end h-full py-3 gap-1.5">
+              <AnimatePresence>
+                {progress.messages.slice(-2).map((msg) => (
+                  <motion.div
+                    key={msg}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 0.4 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex items-center gap-2 text-[11px] font-mono flex-shrink-0"
+                    style={{ color: '#00E4A3' }}
+                  >
+                    <span style={{ color: 'rgba(0,228,163,0.35)', fontSize: 8 }}>✓</span>
+                    {msg}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+              {progress.currentMessage && (
+                <div className="flex items-center gap-2 text-[11px] font-mono flex-shrink-0" style={{ color: 'rgba(0,194,255,0.8)' }}>
+                  <motion.span
+                    animate={{ opacity: [1, 0] }}
+                    transition={{ duration: 0.6, repeat: Infinity, repeatType: 'reverse' }}
+                    style={{ fontSize: 10 }}
+                  >▋</motion.span>
+                  {progress.currentMessage}
+                </div>
+              )}
+            </div>
           </div>
 
         </div>
