@@ -76,20 +76,37 @@
 ### Landing Page
 Clean particle-node animation with drag-and-drop import zone.
 
+![Landing](screenshots/01-landing.png)
+
 ### Overview Dashboard
 Six animated metric cards, priority heat strip, attack queue, and three recharts panels (donut, bar, histogram).
+
+![Overview](screenshots/02-overview.png)
 
 ### Attack Queue
 Sortable, filterable table of all 23 roastable accounts with CRITICAL/HIGH severity chips, encryption type, DA path distance, and score bars.
 
+![Attack Queue](screenshots/03-attack-queue.png)
+
 ### Target Drawer
 Slide-in panel with animated 0–100 score ring, factor-by-factor breakdown (why this score?), Kerberos metadata, privilege groups, and ready-to-run Hashcat command.
+
+![Target Drawer](screenshots/04-target-drawer.png)
+
+### AD Graph
+Canvas force-directed graph with severity-based ring layout — domain at center, critical targets in the inner ring, attack type badge (K/A/B) inside every node. Click any node for details.
+
+![AD Graph](screenshots/05-ad-graph.png)
 
 ### Command Center
 Split-pane: target list on left, generated attack commands on right. Organized by category (Kerberoast / AS-REP / Crack / Pivot / Enum) with one-click copy and bulk export.
 
-### AD Graph
-Canvas-based force-directed visualization with real physics simulation. Click any node for details. Zoom/pan with mouse. Privileged nodes glow red.
+![Command Center](screenshots/06-command-center.png)
+
+### Kerberoasting Analysis
+Per-account SPN enumeration, encryption type breakdown, and ready-to-run attack commands.
+
+![Kerberoasting](screenshots/07-kerberoasting.png)
 
 ---
 
