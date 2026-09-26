@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, ChevronRight, Play, Shield, Zap, Lock } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -99,9 +99,26 @@ function ParticleCanvas({ particles }: { particles: Particle[] }) {
 }
 
 export function Landing() {
-  const { loadDemo, state } = useApp();
+  const { loadDemo, loadFiles, state } = useApp();
   const particles = useParticles(28);
   const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      loadFiles(Array.from(files));
+    }
+    // Reset so the same files can be re-selected
+    e.target.value = '';
+  }, [loadFiles]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.json'));
+    if (files.length > 0) loadFiles(files);
+  }, [loadFiles]);
 
   const features = [
     { icon: <Shield size={14} />, text: 'Fully offline analysis' },
@@ -190,16 +207,26 @@ export function Landing() {
           transition={{ delay: 0.4, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           className="w-full max-w-sm"
         >
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".json"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+
           <div
             className={`relative rounded-2xl p-8 text-center transition-all duration-200 ${isDragging ? 'scale-[1.02]' : ''}`}
             style={{
-              background: isDragging ? 'rgba(59,130,246,0.08)' : 'rgba(17,24,32,0.8)',
-              border: `2px dashed ${isDragging ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.1)'}`,
-              boxShadow: isDragging ? '0 0 40px rgba(59,130,246,0.12)' : 'none',
+              background: isDragging ? 'rgba(0,194,255,0.06)' : 'rgba(17,24,32,0.8)',
+              border: `2px dashed ${isDragging ? 'rgba(0,194,255,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              boxShadow: isDragging ? '0 0 40px rgba(0,194,255,0.1)' : 'none',
             }}
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={e => { e.preventDefault(); setIsDragging(false); }}
+            onDrop={handleDrop}
           >
             <Upload size={24} className="mx-auto mb-3" style={{ color: 'rgba(139,149,165,0.4)' }} />
             <p className="text-sm font-medium mb-1" style={{ color: '#F5F7FA' }}>Drop BloodHound JSON files</p>
@@ -209,11 +236,14 @@ export function Landing() {
               <motion.button
                 whileHover={{ scale: 1.02, y: -1 }}
                 whileTap={{ scale: 0.98 }}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={state.isImporting}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
                 style={{
-                  background: 'linear-gradient(135deg, #1D4ED8, #7C3AED)',
+                  background: 'linear-gradient(135deg, #0EA5E9, #6366F1)',
                   color: 'white',
-                  boxShadow: '0 4px 20px rgba(59,130,246,0.3)',
+                  boxShadow: '0 4px 20px rgba(0,194,255,0.25)',
+                  opacity: state.isImporting ? 0.5 : 1,
                 }}
               >
                 <Upload size={14} />
@@ -236,11 +266,12 @@ export function Landing() {
                   background: 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.08)',
                   color: '#8B95A5',
+                  opacity: state.isImporting ? 0.5 : 1,
                 }}
               >
-                <Play size={13} className="text-blue-400" />
+                <Play size={13} style={{ color: '#00C2FF' }} />
                 Load demo dataset
-                <ChevronRight size={13} className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />
+                <ChevronRight size={13} className="opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: '#00C2FF' }} />
               </motion.button>
             </div>
           </div>
@@ -272,208 +303,201 @@ function ImportProgressOverlay() {
   const { state } = useApp();
   const progress = state.importProgress!;
 
-  const stages = [
-    { label: 'PARSE', icon: '⬡' },
-    { label: 'GRAPH', icon: '⬡' },
-    { label: 'IDENTIFY', icon: '⬡' },
-    { label: 'SCORE', icon: '⬡' },
-    { label: 'RANK', icon: '⬡' },
-  ];
+  const stages = ['PARSE', 'GRAPH', 'IDENTIFY', 'SCORE', 'RANK'];
   const percent = Math.round((progress.stageIndex / progress.totalStages) * 100);
-  const activeStage = progress.stageIndex - 1;
+  const activeStage = progress.stageIndex - 1; // 0-indexed current stage
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: 0.25 }}
       className="absolute inset-0 z-20 flex items-center justify-center"
-      style={{ background: 'rgba(6,10,18,0.94)', backdropFilter: 'blur(20px)' }}
+      style={{ background: 'rgba(6,10,18,0.96)', backdropFilter: 'blur(24px)' }}
     >
-      {/* Ambient glow */}
+      {/* Ambient radial glow */}
       <div className="absolute inset-0 pointer-events-none" style={{
-        background: 'radial-gradient(ellipse 55% 40% at 50% 50%, rgba(0,194,255,0.04) 0%, transparent 70%)',
+        background: 'radial-gradient(ellipse 50% 35% at 50% 50%, rgba(0,194,255,0.05) 0%, transparent 70%)',
       }} />
 
       <motion.div
-        initial={{ scale: 0.88, opacity: 0, y: 16 }}
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        className="relative w-full max-w-lg rounded-3xl overflow-hidden"
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        className="relative w-full rounded-3xl overflow-hidden"
         style={{
-          background: 'linear-gradient(160deg, #0D1524 0%, #0A1120 100%)',
-          border: '1px solid rgba(0,194,255,0.12)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,194,255,0.06), inset 0 1px 0 rgba(0,194,255,0.06)',
+          maxWidth: 540,
+          background: 'linear-gradient(160deg, #0D1828 0%, #0A1220 100%)',
+          border: '1px solid rgba(0,194,255,0.1)',
+          boxShadow: '0 32px 100px rgba(0,0,0,0.85), 0 0 0 1px rgba(0,194,255,0.05)',
         }}
       >
-        {/* Grid background texture */}
+        {/* Subtle grid texture */}
         <div className="absolute inset-0 pointer-events-none" style={{
-          backgroundImage: 'linear-gradient(rgba(0,194,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(0,194,255,0.015) 1px, transparent 1px)',
-          backgroundSize: '32px 32px',
+          backgroundImage: 'linear-gradient(rgba(0,194,255,0.012) 1px, transparent 1px), linear-gradient(90deg, rgba(0,194,255,0.012) 1px, transparent 1px)',
+          backgroundSize: '36px 36px',
         }} />
 
-        {/* Top accent line — animated scan */}
-        <div className="relative h-0.5 overflow-hidden" style={{ background: 'rgba(0,194,255,0.06)' }}>
+        {/* Top scan line */}
+        <div className="relative h-px overflow-hidden" style={{ background: 'rgba(0,194,255,0.04)' }}>
           <motion.div
-            className="absolute inset-y-0 w-24"
-            animate={{ x: ['-100%', '600%'] }}
-            transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
-            style={{ background: 'linear-gradient(90deg, transparent, #00C2FF, transparent)' }}
+            className="absolute inset-y-0 w-32"
+            animate={{ x: ['-128px', '640px'] }}
+            transition={{ duration: 3, repeat: Infinity, ease: 'linear', repeatDelay: 0 }}
+            style={{ background: 'linear-gradient(90deg, transparent, rgba(0,194,255,0.6), transparent)' }}
           />
         </div>
 
-        <div className="relative p-7">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+        <div className="relative px-9 pt-8 pb-7">
+
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
               <motion.div
-                animate={{ opacity: [0.5, 1, 0.5], scale: [0.9, 1.1, 0.9] }}
-                transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-2.5 h-2.5 rounded-full"
-                style={{ background: '#00C2FF', boxShadow: '0 0 10px #00C2FF, 0 0 20px rgba(0,194,255,0.4)' }}
+                animate={{ opacity: [0.4, 1, 0.4] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ background: '#00C2FF', boxShadow: '0 0 8px #00C2FF, 0 0 16px rgba(0,194,255,0.3)' }}
               />
-              <span className="font-mono text-sm font-bold tracking-[0.18em]" style={{ color: '#EEF2FF' }}>
-                ANALYZING DATASET
+              <span className="font-mono text-xs font-bold tracking-[0.22em] uppercase" style={{ color: 'rgba(238,242,255,0.9)' }}>
+                Analyzing Dataset
               </span>
             </div>
-            <motion.span
-              key={percent}
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="font-mono text-2xl font-bold tabular-nums"
-              style={{ color: '#00C2FF', textShadow: '0 0 20px rgba(0,194,255,0.5)' }}
-            >
-              {percent}<span className="text-base font-normal" style={{ color: 'rgba(0,194,255,0.4)' }}>%</span>
-            </motion.span>
+            {/* Plain percentage — no key remount, no jitter */}
+            <span className="font-mono text-3xl font-bold tabular-nums leading-none" style={{ color: '#00C2FF', textShadow: '0 0 24px rgba(0,194,255,0.4)' }}>
+              {percent}<span className="text-sm font-normal ml-0.5" style={{ color: 'rgba(0,194,255,0.35)' }}>%</span>
+            </span>
           </div>
 
-          {/* Stage pipeline */}
-          <div className="relative flex items-center mb-6">
-            {/* Connecting track */}
-            <div className="absolute top-5 left-5 right-5 h-px" style={{ background: 'rgba(255,255,255,0.05)' }}>
-              <motion.div
-                className="h-full"
-                animate={{ width: `${Math.max(0, (activeStage / (stages.length - 1)) * 100)}%` }}
-                transition={{ duration: 0.5, ease: 'easeOut' }}
-                style={{ background: 'linear-gradient(90deg, #00C2FF, #A78BFA)', boxShadow: '0 0 8px rgba(0,194,255,0.4)' }}
-              />
-            </div>
-
-            {stages.map((stage, i) => {
+          {/* Stage nodes — NO connecting line. Each enlightens on complete. */}
+          <div className="flex items-start justify-between mb-8 px-2">
+            {stages.map((label, i) => {
               const isDone = i < progress.stageIndex;
               const isActive = i === activeStage;
+              const isFuture = i > activeStage;
               return (
-                <div key={i} className="relative flex flex-col items-center flex-1">
-                  {/* Outer pulse ring for active */}
-                  {isActive && (
+                <div key={i} className="flex flex-col items-center gap-2.5" style={{ flex: 1 }}>
+                  <div className="relative flex items-center justify-center" style={{ width: 48, height: 48 }}>
+                    {/* Pulse ring — active only */}
+                    {isActive && (
+                      <motion.div
+                        className="absolute rounded-full"
+                        animate={{ scale: [1, 1.6], opacity: [0.5, 0] }}
+                        transition={{ duration: 1.4, repeat: Infinity, ease: 'easeOut' }}
+                        style={{ width: 48, height: 48, background: 'rgba(0,194,255,0.15)', borderRadius: '50%' }}
+                      />
+                    )}
+                    {/* The node circle */}
                     <motion.div
-                      className="absolute top-0 w-10 h-10 rounded-full"
-                      animate={{ scale: [1, 1.5, 1], opacity: [0.4, 0, 0.4] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                      style={{ background: 'rgba(0,194,255,0.15)' }}
-                    />
-                  )}
-                  {/* Node */}
-                  <motion.div
-                    animate={isActive ? { boxShadow: ['0 0 8px rgba(0,194,255,0.4)', '0 0 20px rgba(0,194,255,0.7)', '0 0 8px rgba(0,194,255,0.4)'] } : {}}
-                    transition={{ duration: 1.4, repeat: Infinity }}
-                    className="w-10 h-10 rounded-full flex items-center justify-center relative z-10 text-sm font-mono font-bold transition-all duration-500"
-                    style={{
-                      background: isDone
-                        ? 'linear-gradient(135deg, #00C2FF20, #A78BFA20)'
-                        : isActive
-                        ? 'rgba(0,194,255,0.12)'
-                        : 'rgba(255,255,255,0.03)',
-                      border: isDone
-                        ? '1.5px solid rgba(0,194,255,0.5)'
-                        : isActive
-                        ? '1.5px solid rgba(0,194,255,0.7)'
-                        : '1.5px solid rgba(255,255,255,0.07)',
-                      color: isDone ? '#00C2FF' : isActive ? '#00C2FF' : 'rgba(126,143,168,0.25)',
-                    }}
+                      className="relative z-10 w-11 h-11 rounded-full flex items-center justify-center font-mono font-bold text-sm"
+                      animate={isDone ? {
+                        background: 'rgba(0,194,255,0.12)',
+                        borderColor: 'rgba(0,194,255,0.55)',
+                        color: '#00C2FF',
+                        boxShadow: '0 0 16px rgba(0,194,255,0.25)',
+                      } : isActive ? {
+                        background: 'rgba(0,194,255,0.08)',
+                        borderColor: 'rgba(0,194,255,0.6)',
+                        color: '#00C2FF',
+                        boxShadow: ['0 0 10px rgba(0,194,255,0.2)', '0 0 22px rgba(0,194,255,0.45)', '0 0 10px rgba(0,194,255,0.2)'],
+                      } : {
+                        background: 'rgba(255,255,255,0.025)',
+                        borderColor: 'rgba(255,255,255,0.07)',
+                        color: 'rgba(126,143,168,0.2)',
+                        boxShadow: 'none',
+                      }}
+                      transition={isDone || isFuture ? { duration: 0.5 } : { boxShadow: { duration: 1.4, repeat: Infinity } }}
+                      style={{ border: '1.5px solid', willChange: 'box-shadow' }}
+                    >
+                      {isDone ? '✓' : i + 1}
+                    </motion.div>
+                  </div>
+                  <motion.span
+                    animate={isDone ? { color: '#00C2FF', opacity: 0.9 } : isActive ? { color: '#00C2FF', opacity: 0.6 } : { color: 'rgba(126,143,168,1)', opacity: 0.18 }}
+                    transition={{ duration: 0.5 }}
+                    className="text-[8px] font-mono tracking-[0.15em] font-semibold uppercase"
                   >
-                    {isDone ? '✓' : i + 1}
-                  </motion.div>
-                  <span
-                    className="mt-2 text-[8.5px] font-mono tracking-widest transition-all duration-500"
-                    style={{
-                      color: isDone ? '#00C2FF' : isActive ? 'rgba(0,194,255,0.6)' : 'rgba(126,143,168,0.2)',
-                      fontWeight: isActive || isDone ? 700 : 400,
-                    }}
-                  >
-                    {stage.label}
-                  </span>
+                    {label}
+                  </motion.span>
                 </div>
               );
             })}
           </div>
 
           {/* Progress bar */}
-          <div className="relative mb-5">
-            <div className="rounded-full overflow-hidden relative" style={{ height: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}>
-              {/* Fill */}
+          <div className="mb-6">
+            <div className="relative rounded-full overflow-hidden" style={{ height: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* Fill + shimmer clipped inside it */}
               <motion.div
-                className="absolute inset-y-0 left-0 rounded-full"
+                className="absolute inset-y-0 left-0 rounded-full overflow-hidden"
                 animate={{ width: `${percent}%` }}
-                transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-                style={{ background: 'linear-gradient(90deg, #0EA5E9 0%, #00C2FF 50%, #A78BFA 100%)' }}
-              />
-              {/* Shimmer sweep */}
-              {percent > 5 && (
-                <motion.div
-                  className="absolute inset-y-0 w-16"
-                  animate={{ x: ['-64px', `${(percent / 100) * 460}px`] }}
-                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-                  style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent)', borderRadius: 9999 }}
-                />
-              )}
-            </div>
-            {/* Glow lead dot */}
-            {percent > 1 && percent < 100 && (
-              <motion.div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
-                animate={{ width: `${percent}%` }}
-                transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-                style={{ right: 'auto' }}
+                transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
+                style={{ background: 'linear-gradient(90deg, #0EA5E9, #00C2FF 55%, #818CF8)' }}
               >
+                {/* Shimmer constrained to fill */}
                 <motion.div
-                  className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full"
-                  animate={{ scale: [1, 1.4, 1], opacity: [0.8, 1, 0.8] }}
-                  transition={{ duration: 0.9, repeat: Infinity }}
-                  style={{ background: '#00C2FF', boxShadow: '0 0 12px #00C2FF, 0 0 24px rgba(0,194,255,0.5)' }}
+                  className="absolute inset-0"
+                  animate={{ x: ['-100%', '100%'] }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: 'linear', repeatDelay: 0 }}
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.22) 50%, transparent 100%)' }}
                 />
               </motion.div>
+            </div>
+            {/* Lead glow dot — absolutely positioned over the bar */}
+            {percent > 1 && percent < 99 && (
+              <div className="relative" style={{ height: 0 }}>
+                <motion.div
+                  className="absolute"
+                  animate={{ left: `${percent}%` }}
+                  transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
+                  style={{ top: -9, transform: 'translateX(-50%)' }}
+                >
+                  <motion.div
+                    animate={{ opacity: [0.7, 1, 0.7] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                    style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: '#00C2FF',
+                      boxShadow: '0 0 10px #00C2FF, 0 0 20px rgba(0,194,255,0.5)',
+                    }}
+                  />
+                </motion.div>
+              </div>
             )}
           </div>
 
-          {/* Log terminal */}
-          <div className="rounded-xl p-3 space-y-1.5" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,194,255,0.05)', minHeight: 72 }}>
+          {/* Terminal log */}
+          <div className="rounded-2xl px-4 py-3.5 space-y-1.5"
+            style={{ background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(0,194,255,0.05)', minHeight: 80 }}>
             <AnimatePresence mode="popLayout">
-              {progress.messages.slice(-3).map((msg, i) => (
+              {progress.messages.slice(-3).map((msg) => (
                 <motion.div
-                  key={`${i}-${msg}`}
-                  initial={{ opacity: 0, x: -10, height: 0 }}
-                  animate={{ opacity: 0.5, x: 0, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.25 }}
+                  key={msg}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 0.45, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
                   className="flex items-center gap-2 text-[11px] font-mono"
-                  style={{ color: 'rgba(0,228,163,0.55)' }}
+                  style={{ color: '#00E4A3' }}
                 >
-                  <span style={{ color: 'rgba(0,228,163,0.3)' }}>✓</span>
+                  <span style={{ color: 'rgba(0,228,163,0.4)', fontSize: 8 }}>✓</span>
                   {msg}
                 </motion.div>
               ))}
             </AnimatePresence>
-            <div className="flex items-center gap-2 text-[11px] font-mono" style={{ color: 'rgba(0,194,255,0.75)' }}>
-              <motion.span
-                animate={{ opacity: [1, 0, 1] }}
-                transition={{ duration: 0.9, repeat: Infinity }}
-                style={{ color: '#00C2FF' }}
-              >▋</motion.span>
-              {progress.currentMessage}
-            </div>
+            {progress.currentMessage && (
+              <div className="flex items-center gap-2 text-[11px] font-mono" style={{ color: 'rgba(0,194,255,0.8)' }}>
+                <motion.span
+                  animate={{ opacity: [1, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity, repeatType: 'reverse' }}
+                  style={{ fontSize: 10 }}
+                >▋</motion.span>
+                {progress.currentMessage}
+              </div>
+            )}
           </div>
+
         </div>
       </motion.div>
     </motion.div>
